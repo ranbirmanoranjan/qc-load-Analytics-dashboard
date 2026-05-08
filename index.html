@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>QC Analytics Dashboard</title>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
+
+<link href="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/css/tom-select.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/js/tom-select.complete.min.js"></script>
+
+<style>
+body{
+background:#0f172a;
+font-family:Arial;
+padding:20px;
+color:white;
+}
+.header{
+background:linear-gradient(135deg,#111827,#1e293b);
+padding:25px;
+border-radius:20px;
+margin-bottom:20px;
+}
+.header h1{
+font-size:40px;
+}
+.filters{
+display:grid;
+grid-template-columns:1fr 1fr;
+gap:15px;
+margin-bottom:20px;
+}
+.card-grid{
+display:grid;
+grid-template-columns:repeat(auto-fit,minmax(250px,1fr));
+gap:20px;
+margin-bottom:20px;
+}
+.card{
+background:linear-gradient(145deg,#111827,#1e293b);
+padding:25px;
+border-radius:20px;
+}
+.card h3{
+color:#cbd5e1;
+}
+.card p{
+font-size:42px;
+font-weight:bold;
+}
+.chart-box{
+background:linear-gradient(145deg,#111827,#1e293b);
+padding:25px;
+border-radius:20px;
+margin-bottom:20px;
+}
+canvas{
+background:white;
+border-radius:15px;
+padding:10px;
+}
+</style>
+</head>
+
+<body>
+
+<div class="header">
+<h1>QC Load Analytics Dashboard 🚀</h1>
+</div>
+
+<div class="filters">
+<select id="enterpriseFilter"></select>
+<select id="teamFilter"></select>
+</div>
+
+<div class="card-grid">
+<div class="card">
+<h3>Total QC Load</h3>
+<p id="totalQc">0</p>
+</div>
+
+<div class="card">
+<h3>Total Enterprises</h3>
+<p id="totalEnterprise">0</p>
+</div>
+
+<div class="card">
+<h3>Total Teams</h3>
+<p id="totalTeams">0</p>
+</div>
+
+<div class="card">
+<h3>Average Daily QC</h3>
+<p id="avgDaily">0</p>
+</div>
+</div>
+
+<div class="chart-box">
+<h2>Month-wise QC Load</h2>
+<canvas id="monthlyChart"></canvas>
+</div>
+
+<div class="chart-box">
+<h2>Week-wise QC Load</h2>
+<canvas id="weeklyChart"></canvas>
+</div>
+
+<div class="chart-box">
+<h2>Day-wise QC Load</h2>
+<canvas id="dailyChart"></canvas>
+</div>
+
+<div class="chart-box">
+<h2>Top Enterprises</h2>
+<canvas id="enterpriseChart"></canvas>
+</div>
+
+<div class="chart-box">
+<h2>Top Teams</h2>
+<canvas id="teamChart"></canvas>
+</div>
+
+<script>
+
+Chart.register(ChartDataLabels);
+
+let rawData=[];
+let charts={};
+let enterpriseSelect;
+let teamSelect;
+
+fetch('data.json')
+.then(r=>r.json())
+.then(data=>{
+rawData=data;
+initFilters();
+renderDashboard();
+});
+
+function initFilters(){
+
+const enterpriseMap={};
+
+rawData.forEach(d=>{
+enterpriseMap[d.enterprise_name]=`${d.enterprise_name} | ${d.enterprise_id || ''}`;
+});
+
+const entOptions=Object.entries(enterpriseMap).map(([v,t])=>({
+value:v,
+text:t
+}));
+
+entOptions.unshift({
+value:'All',
+text:'All Enterprises'
+});
+
+enterpriseSelect=new TomSelect('#enterpriseFilter',{
+options:entOptions,
+valueField:'value',
+labelField:'text',
+searchField:['text']
+});
+
+updateTeamDropdown();
+
+enterpriseSelect.on('change',()=>{
+updateTeamDropdown();
+renderDashboard();
+});
+
+}
+
+function updateTeamDropdown(){
+
+const ent=enterpriseSelect.getValue();
+
+let filtered=rawData;
+
+if(ent!=='All'){
+filtered=rawData.filter(d=>d.enterprise_name===ent);
+}
+
+const teams=[...new Set(filtered.map(d=>d.team_name).filter(Boolean))].sort();
+
+const teamOptions=teams.map(t=>({
+value:t,
+text:t
+}));
+
+teamOptions.unshift({
+value:'All',
+text:'All Teams'
+});
+
+if(teamSelect){
+teamSelect.destroy();
+}
+
+document.querySelector('#teamFilter').innerHTML='';
+
+teamSelect=new TomSelect('#teamFilter',{
+options:teamOptions,
+valueField:'value',
+labelField:'text',
+searchField:['text']
+});
+
+teamSelect.setValue('All');
+
+teamSelect.on('change',()=>{
+renderDashboard();
+});
+
+}
+
+function getFiltered(){
+
+const ent=enterpriseSelect.getValue();
+const team=teamSelect.getValue();
+
+let data=rawData;
+
+if(ent!=='All'){
+data=data.filter(d=>d.enterprise_name===ent);
+}
+
+if(team!=='All'){
+data=data.filter(d=>d.team_name===team);
+}
+
+return data;
+
+}
+
+function renderDashboard(){
+
+const data=getFiltered();
+
+const total=data.reduce((a,b)=>a+Number(b.qc_flow||0),0);
+
+document.getElementById('totalQc').innerText=total.toLocaleString();
+document.getElementById('totalEnterprise').innerText=new Set(data.map(d=>d.enterprise_name)).size;
+document.getElementById('totalTeams').innerText=new Set(data.map(d=>d.team_name)).size;
+
+const days=new Set(data.map(d=>d.created_date)).size || 1;
+
+document.getElementById('avgDaily').innerText=Math.round(total/days).toLocaleString();
+
+renderMonth(data);
+renderWeek(data);
+renderDay(data);
+renderEnterprise(data);
+renderTeam(data);
+
+}
+
+function aggregate(data,fn){
+
+const grouped={};
+
+data.forEach(d=>{
+const key=fn(new Date(d.created_date));
+grouped[key]=(grouped[key]||0)+Number(d.qc_flow||0);
+});
+
+return grouped;
+
+}
+
+function chart(id,labels,values){
+
+if(charts[id]){
+charts[id].destroy();
+}
+
+charts[id]=new Chart(document.getElementById(id),{
+type:'bar',
+data:{
+labels:labels,
+datasets:[{
+data:values,
+backgroundColor:'#3b82f6',
+borderRadius:8
+}]
+},
+options:{
+plugins:{
+legend:{display:false},
+datalabels:{
+anchor:'end',
+align:'top',
+color:'#111827',
+font:{weight:'bold'},
+formatter:(v)=>v.toLocaleString()
+}
+}
+}
+});
+
+}
+
+function renderMonth(data){
+
+const g=aggregate(data,d=>d.toLocaleString('default',{month:'short',year:'numeric'}));
+
+chart('monthlyChart',Object.keys(g),Object.values(g));
+
+}
+
+function renderWeek(data){
+
+const g=aggregate(data,d=>{
+const w=Math.ceil(d.getDate()/7);
+return `${d.toLocaleString('default',{month:'short'})} W-${w}`;
+});
+
+chart('weeklyChart',Object.keys(g),Object.values(g));
+
+}
+
+function renderDay(data){
+
+const g=aggregate(data,d=>d.toISOString().slice(0,10));
+
+chart('dailyChart',Object.keys(g),Object.values(g));
+
+}
+
+function renderEnterprise(data){
+
+const grouped={};
+
+data.forEach(d=>{
+const name=`${d.enterprise_name} | ${d.enterprise_id || ''}`;
+grouped[name]=(grouped[name]||0)+Number(d.qc_flow||0);
+});
+
+const sorted=Object.entries(grouped).sort((a,b)=>b[1]-a[1]).slice(0,10);
+
+chart(
+'enterpriseChart',
+sorted.map(x=>x[0]),
+sorted.map(x=>x[1])
+);
+
+}
+
+function renderTeam(data){
+
+const grouped={};
+
+data.forEach(d=>{
+grouped[d.team_name]=(grouped[d.team_name]||0)+Number(d.qc_flow||0);
+});
+
+const sorted=Object.entries(grouped).sort((a,b)=>b[1]-a[1]).slice(0,10);
+
+chart(
+'teamChart',
+sorted.map(x=>x[0]),
+sorted.map(x=>x[1])
+);
+
+}
+
+</script>
+
+</body>
+</html>
