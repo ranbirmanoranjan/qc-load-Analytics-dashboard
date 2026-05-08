@@ -1,0 +1,325 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>QC Load Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/luxon@3/build/global/luxon.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      background: #f4f6f9;
+      color: #222;
+    }
+    header {
+      background: #111827;
+      color: white;
+      padding: 20px;
+      font-size: 24px;
+      font-weight: bold;
+    }
+    .container {
+      padding: 20px;
+    }
+    .filters {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+    select {
+      padding: 10px;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+      min-width: 220px;
+    }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit,minmax(220px,1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .card {
+      background: white;
+      padding: 20px;
+      border-radius: 16px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+    .card h3 {
+      margin: 0;
+      color: #666;
+      font-size: 14px;
+    }
+    .card p {
+      margin-top: 10px;
+      font-size: 28px;
+      font-weight: bold;
+    }
+    .chart-box {
+      background: white;
+      padding: 20px;
+      border-radius: 16px;
+      margin-bottom: 24px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+    canvas {
+      max-height: 400px;
+    }
+  </style>
+</head>
+<body>
+
+<header>QC Load Analytics Dashboard</header>
+
+<div class="container">
+
+  <div class="filters">
+    <select id="enterpriseFilter">
+      <option value="All">All Enterprises</option>
+    </select>
+
+    <select id="teamFilter">
+      <option value="All">All Teams</option>
+    </select>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <h3>Total QC Load</h3>
+      <p id="totalQc">0</p>
+    </div>
+
+    <div class="card">
+      <h3>Total Enterprises</h3>
+      <p id="totalEnterprise">0</p>
+    </div>
+
+    <div class="card">
+      <h3>Total Teams</h3>
+      <p id="totalTeams">0</p>
+    </div>
+
+    <div class="card">
+      <h3>Average Daily QC</h3>
+      <p id="avgDaily">0</p>
+    </div>
+  </div>
+
+  <div class="chart-box">
+    <h2>Month-wise QC Load</h2>
+    <canvas id="monthlyChart"></canvas>
+  </div>
+
+  <div class="chart-box">
+    <h2>Week-wise QC Load</h2>
+    <canvas id="weeklyChart"></canvas>
+  </div>
+
+  <div class="chart-box">
+    <h2>Day-wise QC Load</h2>
+    <canvas id="dailyChart"></canvas>
+  </div>
+
+  <div class="chart-box">
+    <h2>Top 10 Enterprises</h2>
+    <canvas id="enterpriseChart"></canvas>
+  </div>
+
+  <div class="chart-box">
+    <h2>Top 10 Teams</h2>
+    <canvas id="teamChart"></canvas>
+  </div>
+
+</div>
+
+<script>
+let rawData = [];
+let monthlyChart, weeklyChart, dailyChart, enterpriseChart, teamChart;
+
+fetch('data.json')
+  .then(res => res.json())
+  .then(data => {
+    rawData = data;
+
+    populateFilters();
+    renderDashboard();
+
+    document.getElementById('enterpriseFilter').addEventListener('change', renderDashboard);
+    document.getElementById('teamFilter').addEventListener('change', renderDashboard);
+  });
+
+function populateFilters() {
+  const enterpriseSet = [...new Set(rawData.map(d => d.enterprise_name))].sort();
+  const teamSet = [...new Set(rawData.map(d => d.team_name))].sort();
+
+  const enterpriseFilter = document.getElementById('enterpriseFilter');
+  const teamFilter = document.getElementById('teamFilter');
+
+  enterpriseSet.forEach(v => {
+    const option = document.createElement('option');
+    option.value = v;
+    option.textContent = v;
+    enterpriseFilter.appendChild(option);
+  });
+
+  teamSet.forEach(v => {
+    const option = document.createElement('option');
+    option.value = v;
+    option.textContent = v;
+    teamFilter.appendChild(option);
+  });
+}
+
+function renderDashboard() {
+  const enterprise = document.getElementById('enterpriseFilter').value;
+  const team = document.getElementById('teamFilter').value;
+
+  let data = rawData;
+
+  if (enterprise !== 'All') {
+    data = data.filter(d => d.enterprise_name === enterprise);
+  }
+
+  if (team !== 'All') {
+    data = data.filter(d => d.team_name === team);
+  }
+
+  updateCards(data);
+  renderMonthlyChart(data);
+  renderWeeklyChart(data);
+  renderDailyChart(data);
+  renderEnterpriseChart(data);
+  renderTeamChart(data);
+}
+
+function updateCards(data) {
+  const totalQc = data.reduce((a,b)=>a + Number(b.qc_flow),0);
+
+  const enterprises = new Set(data.map(d => d.enterprise_name)).size;
+  const teams = new Set(data.map(d => d.team_name)).size;
+
+  const dates = [...new Set(data.map(d => d.created_date))].length;
+
+  document.getElementById('totalQc').innerText = totalQc.toLocaleString();
+  document.getElementById('totalEnterprise').innerText = enterprises;
+  document.getElementById('totalTeams').innerText = teams;
+  document.getElementById('avgDaily').innerText = Math.round(totalQc / dates).toLocaleString();
+}
+
+function aggregate(data, formatter) {
+  const grouped = {};
+
+  data.forEach(d => {
+    const key = formatter(new Date(d.created_date));
+    grouped[key] = (grouped[key] || 0) + Number(d.qc_flow);
+  });
+
+  return grouped;
+}
+
+function createChart(chartRef, canvasId, labels, values, label) {
+  if (chartRef) chartRef.destroy();
+
+  return new Chart(document.getElementById(canvasId), {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: label,
+        data: values
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false
+    }
+  });
+}
+
+function renderMonthlyChart(data) {
+  const grouped = aggregate(data, d =>
+    d.toLocaleString('default', {month:'short', year:'numeric'})
+  );
+
+  monthlyChart = createChart(
+    monthlyChart,
+    'monthlyChart',
+    Object.keys(grouped),
+    Object.values(grouped),
+    'Monthly QC'
+  );
+}
+
+function renderWeeklyChart(data) {
+  const grouped = aggregate(data, d => {
+    const week = Math.ceil(d.getDate()/7);
+    return `${d.toLocaleString('default',{month:'short'})} Week-${week}`;
+  });
+
+  weeklyChart = createChart(
+    weeklyChart,
+    'weeklyChart',
+    Object.keys(grouped),
+    Object.values(grouped),
+    'Weekly QC'
+  );
+}
+
+function renderDailyChart(data) {
+  const grouped = aggregate(data, d => d.toISOString().slice(0,10));
+
+  dailyChart = createChart(
+    dailyChart,
+    'dailyChart',
+    Object.keys(grouped),
+    Object.values(grouped),
+    'Daily QC'
+  );
+}
+
+function renderEnterpriseChart(data) {
+  const grouped = {};
+
+  data.forEach(d => {
+    grouped[d.enterprise_name] = (grouped[d.enterprise_name] || 0) + Number(d.qc_flow);
+  });
+
+  const sorted = Object.entries(grouped)
+    .sort((a,b)=>b[1]-a[1])
+    .slice(0,10);
+
+  enterpriseChart = createChart(
+    enterpriseChart,
+    'enterpriseChart',
+    sorted.map(x=>x[0]),
+    sorted.map(x=>x[1]),
+    'Enterprise QC'
+  );
+}
+
+function renderTeamChart(data) {
+  const grouped = {};
+
+  data.forEach(d => {
+    grouped[d.team_name] = (grouped[d.team_name] || 0) + Number(d.qc_flow);
+  });
+
+  const sorted = Object.entries(grouped)
+    .sort((a,b)=>b[1]-a[1])
+    .slice(0,10);
+
+  teamChart = createChart(
+    teamChart,
+    'teamChart',
+    sorted.map(x=>x[0]),
+    sorted.map(x=>x[1]),
+    'Team QC'
+  );
+}
+</script>
+
+</body>
+</html>
